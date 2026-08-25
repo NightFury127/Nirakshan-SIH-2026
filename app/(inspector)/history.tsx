@@ -9,6 +9,7 @@ import {
   TextInput,
   Modal,
   Pressable,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppStore } from '../../src/store/useAppStore';
@@ -168,16 +169,41 @@ function DetailModal({
           </SectionCard>
 
           {/* GPS */}
-          <SectionCard title="📡 GPS Verification">
+          <SectionCard title="📡 GPS Geofence Verification">
             <DetailRow
-              label="GPS Verified"
-              value={inspection.gpsVerified ? '✅ Verified' : '❌ Not Verified'}
+              label="Verification Status"
+              value={inspection.gpsVerified ? '🟢 Verified On-Site' : inspection.gpsStatus === 'FAILED' ? '🔴 Failed / Outside Radius' : '🟠 Not Verified'}
               valueColor={inspection.gpsVerified ? COLORS.success : COLORS.danger}
             />
+            {inspection.gpsDistance != null && (
+              <DetailRow
+                label="Calculated Distance"
+                value={`${inspection.gpsDistance} meters (Allowed: ${inspection.gpsAllowedRadius ?? 100}m)`}
+                valueColor={inspection.gpsVerified ? COLORS.success : COLORS.danger}
+              />
+            )}
+            {inspection.gpsAccuracy != null && (
+              <DetailRow
+                label="GPS Accuracy"
+                value={`±${inspection.gpsAccuracy} meters`}
+              />
+            )}
             {inspection.gpsLat != null && (
               <DetailRow
-                label="Coordinates"
+                label="Inspector GPS"
                 value={`${inspection.gpsLat.toFixed(6)}, ${inspection.gpsLng?.toFixed(6)}`}
+              />
+            )}
+            {project && (
+              <DetailRow
+                label="Project Reference"
+                value={`${project.lat.toFixed(6)}, ${project.lng.toFixed(6)}`}
+              />
+            )}
+            {inspection.gpsVerifiedAt && (
+              <DetailRow
+                label="Verified At"
+                value={new Date(inspection.gpsVerifiedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
               />
             )}
           </SectionCard>
@@ -205,7 +231,16 @@ function DetailModal({
           {(inspection.photoUri || inspection.remarks) && (
             <SectionCard title="📸 Evidence & Remarks">
               {inspection.photoUri && (
-                <DetailRow label="Photo" value="1 photo attached ✅" valueColor={COLORS.success} />
+                <View style={styles.photoContainer}>
+                  <Image
+                    source={{ uri: inspection.photoUri }}
+                    style={styles.evidenceImage}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.photoTag}>
+                    <Text style={styles.photoTagText}>📍 Geotagged Field Evidence</Text>
+                  </View>
+                </View>
               )}
               {inspection.remarks && (
                 <View style={styles.remarksBox}>
@@ -612,5 +647,29 @@ const styles = StyleSheet.create({
     fontSize: FONT.sm,
     color: COLORS.textSecondary,
     lineHeight: 20,
+  },
+  photoContainer: {
+    margin: 14,
+    backgroundColor: COLORS.surfaceSunken,
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  evidenceImage: {
+    width: '100%',
+    height: 190,
+  },
+  photoTag: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: COLORS.surfaceElevated,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  photoTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.success,
   },
 });

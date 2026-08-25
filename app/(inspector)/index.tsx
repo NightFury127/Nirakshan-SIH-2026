@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppStore } from '../../src/store/useAppStore';
@@ -58,14 +59,90 @@ function AddProjectModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // GPS Auto-Acquisition State
+  const [detectingGps, setDetectingGps] = useState(false);
+  const [gpsSuccessMessage, setGpsSuccessMessage] = useState<string | null>(null);
+  const [gpsErrorMessage, setGpsErrorMessage] = useState<string | null>(null);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+
   const reset = () => {
     setName(''); setLocation(''); setDistrict(''); setState('Uttar Pradesh');
     setType(''); setBudget(''); setContractor(''); setManagerName('');
     setManagerPhone(''); setExpectedStaff(''); setExpectedBeneficiaries('');
     setLat(''); setLng(''); setError(null); setSubmitting(false);
+    setDetectingGps(false); setGpsSuccessMessage(null); setGpsErrorMessage(null);
+    setGpsAccuracy(null);
   };
 
   const handleClose = () => { reset(); onClose(); };
+
+  // Auto-acquire exact current GPS coordinates
+  const detectCurrentLocation = async (silent = false) => {
+    setDetectingGps(true);
+    setGpsErrorMessage(null);
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        if (!silent) setGpsErrorMessage('Location permission denied. Please enable GPS access in device settings.');
+        setDetectingGps(false);
+        return;
+      }
+
+      const isEnabled = await Location.hasServicesEnabledAsync();
+      if (!isEnabled) {
+        if (!silent) setGpsErrorMessage('Device GPS / location services are turned off. Please turn on GPS.');
+        setDetectingGps(false);
+        return;
+      }
+
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const detectedLat = loc.coords.latitude.toFixed(6);
+      const detectedLng = loc.coords.longitude.toFixed(6);
+      setLat(detectedLat);
+      setLng(detectedLng);
+      setGpsAccuracy(loc.coords.accuracy ? Math.round(loc.coords.accuracy) : null);
+      setGpsSuccessMessage(`GPS Captured: ${detectedLat}, ${detectedLng}`);
+
+      // Try reverse geocoding to auto-fill location / district if empty
+      try {
+        const geoResults = await Location.reverseGeocodeAsync({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        });
+        if (geoResults && geoResults.length > 0) {
+          const geo = geoResults[0];
+          if (!district) {
+            const dist = geo.city || geo.district || geo.subregion || 'Varanasi';
+            setDistrict(dist);
+          }
+          if (!state && geo.region) {
+            setState(geo.region);
+          }
+          if (!location) {
+            const locName = [geo.name, geo.street, geo.subregion].filter(Boolean).join(', ');
+            if (locName) setLocation(locName);
+          }
+        }
+      } catch {
+        // Reverse geocoding optional fallback
+      }
+    } catch (e: any) {
+      if (!silent) setGpsErrorMessage(e?.message || 'Could not acquire GPS fix.');
+    } finally {
+      setDetectingGps(false);
+    }
+  };
+
+  // Automatically fetch GPS when modal opens
+  useEffect(() => {
+    if (visible && !lat && !lng) {
+      detectCurrentLocation(true);
+    }
+  }, [visible]);
 
   const handleSubmit = () => {
     setError(null);
@@ -121,6 +198,53 @@ function AddProjectModal({
               </View>
             )}
 
+            {/* GPS Auto-Detection & Geotag Card */}
+            <View style={modal.gpsAutoCard}>
+              <View style={modal.gpsAutoHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={modal.gpsAutoTitle}>📍 PROJECT SITE GPS CODES</Text>
+                  <Text style={modal.gpsAutoSub}>
+                    Auto-captures exact current physical device coordinates for reference geofencing
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[modal.detectGpsBtn, detectingGps && { opacity: 0.7 }]}
+                onPress={() => detectCurrentLocation(false)}
+                disabled={detectingGps}
+              >
+                {detectingGps ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <ActivityIndicator size="small" color="#fff" />
+                    <Text style={modal.detectGpsBtnText}>Acquiring GPS Position...</Text>
+                  </View>
+                ) : (
+                  <Text style={modal.detectGpsBtnText}>
+                    📍 {lat && lng ? 'Re-Detect Current GPS' : 'Detect My Current Location (GPS)'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              {lat && lng && (
+                <View style={modal.gpsDetectedBanner}>
+                  <Text style={modal.gpsDetectedIcon}>🟢</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={modal.gpsDetectedText}>
+                      Live GPS Acquired: <Text style={{ fontFamily: 'monospace', fontWeight: '800' }}>{lat}, {lng}</Text>
+                      {gpsAccuracy != null ? ` (±${gpsAccuracy}m)` : ''}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {gpsErrorMessage && (
+                <View style={modal.gpsErrorBanner}>
+                  <Text style={modal.gpsErrorText}>⚠️ {gpsErrorMessage}</Text>
+                </View>
+              )}
+            </View>
+
             {/* Project Type Picker */}
             <Text style={modal.label}>Project Type *</Text>
             <TouchableOpacity
@@ -168,11 +292,11 @@ function AddProjectModal({
 
             <View style={modal.row}>
               <View style={{ flex: 1 }}>
-                <Field label="Latitude (GPS)" value={lat} onChangeText={setLat} placeholder="e.g. 25.3176" keyboardType="decimal-pad" />
+                <Field label="Latitude (GPS)" value={lat} onChangeText={setLat} placeholder="Auto-detected or enter" keyboardType="decimal-pad" />
               </View>
               <View style={{ width: 12 }} />
               <View style={{ flex: 1 }}>
-                <Field label="Longitude (GPS)" value={lng} onChangeText={setLng} placeholder="e.g. 82.9739" keyboardType="decimal-pad" />
+                <Field label="Longitude (GPS)" value={lng} onChangeText={setLng} placeholder="Auto-detected or enter" keyboardType="decimal-pad" />
               </View>
             </View>
 
@@ -494,6 +618,81 @@ const modal = StyleSheet.create({
   typeItem:      { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   typeItemActive:{ backgroundColor: COLORS.inspectorBlue + '15' },
   typeItemText:  { fontSize: FONT.sm, color: COLORS.textSecondary },
+
+  // ── GPS Auto Detection Card in Project Registration ──
+  gpsAutoCard: {
+    backgroundColor: COLORS.surfaceSunken,
+    borderRadius: RADIUS.lg,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.inspectorBlue + '35',
+    marginBottom: 16,
+  },
+  gpsAutoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  gpsAutoTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.inspectorBlue,
+    letterSpacing: 1,
+  },
+  gpsAutoSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  detectGpsBtn: {
+    backgroundColor: COLORS.inspectorBlue,
+    borderRadius: RADIUS.md,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  detectGpsBtnText: {
+    fontSize: FONT.xs,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
+  gpsDetectedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: COLORS.success + '15',
+    borderColor: COLORS.success + '40',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+  },
+  gpsDetectedIcon: {
+    fontSize: 12,
+  },
+  gpsDetectedText: {
+    fontSize: FONT.xs,
+    color: COLORS.success,
+    fontWeight: '600',
+  },
+  gpsErrorBanner: {
+    backgroundColor: COLORS.danger + '15',
+    borderColor: COLORS.danger + '40',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: 8,
+    marginTop: 8,
+  },
+  gpsErrorText: {
+    fontSize: 11,
+    color: COLORS.danger,
+    lineHeight: 15,
+  },
 
   submitBtn:     { backgroundColor: COLORS.inspectorBlue, borderRadius: RADIUS.xl, paddingVertical: 16, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   submitBtnText: { fontSize: FONT.md, fontWeight: '800', color: '#fff' },

@@ -50,6 +50,25 @@ export function InspectionCard({ inspection, projectName, onPress }: InspectionC
         <View style={styles.info}>
           <Text style={styles.project} numberOfLines={1}>{projectName}</Text>
           <Text style={styles.time}>🕐 {timeStr}  ·  {isSurprise ? '⚡ Surprise Inspection' : type.label}</Text>
+          <View style={styles.gpsBadgeRow}>
+            {inspection.gpsVerified ? (
+              <View style={styles.gpsVerifiedChip}>
+                <Text style={styles.gpsVerifiedText}>
+                  🟢 GPS Verified {inspection.gpsDistance != null ? `(${inspection.gpsDistance}m)` : ''}
+                </Text>
+              </View>
+            ) : inspection.gpsStatus === 'FAILED' ? (
+              <View style={styles.gpsFailedChip}>
+                <Text style={styles.gpsFailedText}>
+                  🔴 GPS Failed {inspection.gpsDistance != null ? `(${inspection.gpsDistance}m)` : ''}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.gpsPendingChip}>
+                <Text style={styles.gpsPendingText}>🟠 GPS Pending</Text>
+              </View>
+            )}
+          </View>
           {inspection.riskFlagged && (
             <Text style={styles.flagged}>⚠️ Risk Flagged — Anomalies Detected</Text>
           )}
@@ -145,5 +164,49 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: FONT.xs,
     fontWeight: '700',
+  },
+  gpsBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 3,
+  },
+  gpsVerifiedChip: {
+    backgroundColor: COLORS.success + '15',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.success + '30',
+  },
+  gpsVerifiedText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.success,
+  },
+  gpsFailedChip: {
+    backgroundColor: COLORS.danger + '15',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.danger + '30',
+  },
+  gpsFailedText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.danger,
+  },
+  gpsPendingChip: {
+    backgroundColor: COLORS.warning + '15',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.warning + '30',
+  },
+  gpsPendingText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.warning,
   },
 });

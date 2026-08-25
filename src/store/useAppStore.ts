@@ -11,6 +11,7 @@ import {
   type Complaint,
 } from './mockData';
 import { calculateRiskScore, type RiskLevel } from '../utils/riskEngine';
+import { verifyInspectorLocation, type GpsVerificationResult } from '../utils/gpsVerification';
 
 interface AppState {
   // Auth
@@ -62,6 +63,11 @@ interface AppState {
     inspectionId: string,
     data: Partial<Inspection>
   ) => void;
+  verifyInspectionGps: (
+    inspectionId: string,
+    coords: { lat: number; lng: number; accuracy?: number },
+    allowedRadius?: number
+  ) => GpsVerificationResult;
   submitInspectionReport: (
     inspectionId: string,
     data: {
@@ -69,10 +75,10 @@ interface AppState {
       actualBeneficiaries: number;
       remarks: string;
       photoUri?: string;
-      gpsLat: number;
-      gpsLng: number;
+      gpsLat?: number;
+      gpsLng?: number;
     }
-  ) => void;
+  ) => { success: boolean; error?: string };
 
   // Actions — Citizen
   submitComplaint: (
@@ -286,14 +292,69 @@ export const useAppStore = create<AppState>()(
         }));
       },
 
+      // ── INSPECTOR: Real GPS Verification against Registered Project Reference ──
+      verifyInspectionGps: (inspectionId, coords, allowedRadius = 100) => {
+        const { inspections, projects } = get();
+        const inspection = inspections.find(i => i.id === inspectionId);
+        if (!inspection) {
+          throw new Error('Inspection not found');
+        }
+        const project = projects.find(p => p.id === inspection.projectId);
+        if (!project) {
+          throw new Error('Project reference not found');
+        }
+
+        const result = verifyInspectorLocation({
+          inspectorLat: coords.lat,
+          inspectorLng: coords.lng,
+          projectLat: project.lat,
+          projectLng: project.lng,
+          accuracy: coords.accuracy,
+          allowedRadius,
+        });
+
+        // Save complete GPS audit trail into store
+        set(state => ({
+          inspections: state.inspections.map(i =>
+            i.id === inspectionId
+              ? {
+                  ...i,
+                  gpsVerified: result.verified,
+                  gpsLat: result.inspectorLat,
+                  gpsLng: result.inspectorLng,
+                  gpsAccuracy: result.accuracy,
+                  gpsDistance: result.distance,
+                  gpsAllowedRadius: result.allowedRadius,
+                  gpsVerifiedAt: result.timestamp,
+                  gpsStatus: result.status,
+                }
+              : i
+          ),
+        }));
+
+        return result;
+      },
+
       // ── INSPECTOR: Submit final report ────────────────────────────────────
       submitInspectionReport: (inspectionId, data) => {
         const { inspections, projects, complaints } = get();
         const inspection = inspections.find(i => i.id === inspectionId);
-        if (!inspection) return;
+        if (!inspection) {
+          return { success: false, error: 'Inspection record not found.' };
+        }
+
+        // Security check: GPS verification MUST be completed on-site before finalizing
+        if (!inspection.gpsVerified) {
+          return {
+            success: false,
+            error: 'Security Error: GPS location verification is required before submitting inspection report.',
+          };
+        }
 
         const project = projects.find(p => p.id === inspection.projectId);
-        if (!project) return;
+        if (!project) {
+          return { success: false, error: 'Project record not found.' };
+        }
 
         const attendanceRatio  = data.actualStaff / project.expectedStaff;
         const beneficiaryRatio = data.actualBeneficiaries / project.expectedBeneficiaries;
@@ -320,8 +381,8 @@ export const useAppStore = create<AppState>()(
           ...inspection,
           status:               'COMPLETED',
           gpsVerified:          true,
-          gpsLat:               data.gpsLat,
-          gpsLng:               data.gpsLng,
+          gpsLat:               data.gpsLat ?? inspection.gpsLat,
+          gpsLng:               data.gpsLng ?? inspection.gpsLng,
           actualStaff:          data.actualStaff,
           actualBeneficiaries:  data.actualBeneficiaries,
           remarks:              data.remarks,
@@ -338,6 +399,8 @@ export const useAppStore = create<AppState>()(
             p.id === inspection.projectId ? updatedProject : p
           ),
         }));
+
+        return { success: true };
       },
 
       // ── CITIZEN: Submit complaint ──────────────────────────────────────────

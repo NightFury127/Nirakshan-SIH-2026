@@ -56,6 +56,11 @@ export interface Inspection {
   gpsVerified: boolean;
   gpsLat?: number;
   gpsLng?: number;
+  gpsAccuracy?: number;
+  gpsDistance?: number;
+  gpsAllowedRadius?: number;
+  gpsVerifiedAt?: string;
+  gpsStatus?: 'VERIFIED' | 'FAILED' | 'PENDING';
   actualStaff?: number;
   actualBeneficiaries?: number;
   photoUri?: string;

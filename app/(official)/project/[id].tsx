@@ -6,6 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Modal,
+  Image,
   Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -15,6 +17,7 @@ import { COLORS, FONT, RADIUS, SHADOW } from '../../../src/theme';
 import { calculateRiskScore, getRiskColor, getRiskBg } from '../../../src/utils/riskEngine';
 import { RiskBadge } from '../../../src/components/RiskBadge';
 import { InspectionCard } from '../../../src/components/InspectionCard';
+import type { Inspection } from '../../../src/store/mockData';
 
 export default function ProjectDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -22,6 +25,7 @@ export default function ProjectDetailScreen() {
   const allProjects = useAppStore(s => s.projects);
   const allComplaints = useAppStore(s => s.complaints);
   const allInspections = useAppStore(s => s.inspections);
+  const allUsers = useAppStore(s => s.users);
   const generateSurpriseInspection = useAppStore(s => s.generateSurpriseInspection);
 
   const project = useMemo(() => allProjects.find(p => p.id === id), [allProjects, id]);
@@ -30,6 +34,7 @@ export default function ProjectDetailScreen() {
 
   const [generatingInspection, setGeneratingInspection] = useState(false);
   const [inspectionGenerated, setInspectionGenerated] = useState(false);
+  const [selectedInspection, setSelectedInspection] = useState<Inspection | null>(null);
 
   const riskBreakdown = useMemo(() => {
     if (!project) return null;
@@ -204,12 +209,166 @@ export default function ProjectDetailScreen() {
               key={insp.id}
               inspection={insp}
               projectName={project.name}
+              onPress={() => setSelectedInspection(insp)}
             />
           ))
         )}
 
         <View style={{ height: 30 }} />
       </ScrollView>
+
+      {/* Official Inspection GPS & Audit Modal */}
+      {selectedInspection && (
+        <Modal
+          visible={Boolean(selectedInspection)}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setSelectedInspection(null)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalCard, SHADOW.elevated]}>
+              <View style={styles.modalHeader}>
+                <View>
+                  <Text style={styles.modalTitle}>Inspection Audit Details</Text>
+                  <Text style={styles.modalSub}>{project.name}</Text>
+                </View>
+                <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setSelectedInspection(null)}>
+                  <Text style={styles.modalCloseText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                {/* GPS Verification Section */}
+                <View style={styles.auditSection}>
+                  <Text style={styles.auditSectionTitle}>📡 GPS GEOFENCE VERIFICATION</Text>
+                  <View style={[
+                    styles.gpsAuditBox,
+                    selectedInspection.gpsVerified ? styles.gpsAuditBoxVerified : styles.gpsAuditBoxPending
+                  ]}>
+                    <View style={styles.auditRow}>
+                      <Text style={styles.auditLabel}>GPS Status:</Text>
+                      <Text style={[
+                        styles.auditValueBold,
+                        selectedInspection.gpsVerified ? { color: COLORS.success } :
+                        selectedInspection.gpsStatus === 'FAILED' ? { color: COLORS.danger } : { color: COLORS.warning }
+                      ]}>
+                        {selectedInspection.gpsVerified ? '🟢 GPS VERIFIED (On-Site)' :
+                         selectedInspection.gpsStatus === 'FAILED' ? '🔴 GPS FAILED' : '🟠 GPS PENDING'}
+                      </Text>
+                    </View>
+
+                    {selectedInspection.gpsDistance != null && (
+                      <View style={styles.auditRow}>
+                        <Text style={styles.auditLabel}>Calculated Distance:</Text>
+                        <Text style={[styles.auditValue, selectedInspection.gpsVerified ? { color: COLORS.success } : { color: COLORS.danger }]}>
+                          {selectedInspection.gpsDistance} m
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={styles.auditRow}>
+                      <Text style={styles.auditLabel}>Allowed Geofence Radius:</Text>
+                      <Text style={styles.auditValue}>
+                        {selectedInspection.gpsAllowedRadius ?? 100} m
+                      </Text>
+                    </View>
+
+                    {selectedInspection.gpsAccuracy != null && (
+                      <View style={styles.auditRow}>
+                        <Text style={styles.auditLabel}>GPS Accuracy:</Text>
+                        <Text style={styles.auditValue}>±{selectedInspection.gpsAccuracy} m</Text>
+                      </View>
+                    )}
+
+                    {selectedInspection.gpsLat != null && (
+                      <View style={styles.auditRow}>
+                        <Text style={styles.auditLabel}>Inspector GPS Coords:</Text>
+                        <Text style={styles.auditValueMonospace}>
+                          {selectedInspection.gpsLat.toFixed(6)}, {selectedInspection.gpsLng?.toFixed(6)}
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={styles.auditRow}>
+                      <Text style={styles.auditLabel}>Project Reference Coords:</Text>
+                      <Text style={styles.auditValueMonospace}>
+                        {project.lat.toFixed(6)}, {project.lng.toFixed(6)}
+                      </Text>
+                    </View>
+
+                    {selectedInspection.gpsVerifiedAt && (
+                      <View style={styles.auditRow}>
+                        <Text style={styles.auditLabel}>Verified Timestamp:</Text>
+                        <Text style={styles.auditValue}>
+                          {new Date(selectedInspection.gpsVerifiedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Attendance & Anomaly Section */}
+                {selectedInspection.actualStaff != null && (
+                  <View style={styles.auditSection}>
+                    <Text style={styles.auditSectionTitle}>👥 ATTENDANCE & ANOMALIES</Text>
+                    <View style={styles.auditInfoCard}>
+                      <View style={styles.auditRow}>
+                        <Text style={styles.auditLabel}>Actual Staff Count:</Text>
+                        <Text style={styles.auditValueBold}>
+                          {selectedInspection.actualStaff} / {project.expectedStaff}
+                        </Text>
+                      </View>
+                      <View style={styles.auditRow}>
+                        <Text style={styles.auditLabel}>Beneficiaries Present:</Text>
+                        <Text style={styles.auditValue}>
+                          {selectedInspection.actualBeneficiaries} / {project.expectedBeneficiaries}
+                        </Text>
+                      </View>
+                      <View style={styles.auditRow}>
+                        <Text style={styles.auditLabel}>Risk Flag Triggered:</Text>
+                        <Text style={[styles.auditValueBold, { color: selectedInspection.riskFlagged ? COLORS.warning : COLORS.success }]}>
+                          {selectedInspection.riskFlagged ? '⚠️ YES — High Risk' : '✅ NO'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {/* Photo Evidence */}
+                {selectedInspection.photoUri && (
+                  <View style={styles.auditSection}>
+                    <Text style={styles.auditSectionTitle}>📸 PHOTO EVIDENCE (ON-SITE PROOF)</Text>
+                    <View style={styles.photoContainer}>
+                      <Image
+                        source={{ uri: selectedInspection.photoUri }}
+                        style={styles.evidenceImage}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.photoTag}>
+                        <Text style={styles.photoTagText}>📍 Geotagged On-Site Capture</Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {/* Remarks & Evidence */}
+                {selectedInspection.remarks && (
+                  <View style={styles.auditSection}>
+                    <Text style={styles.auditSectionTitle}>📝 FIELD REMARKS</Text>
+                    <View style={styles.auditRemarksBox}>
+                      <Text style={styles.auditRemarksText}>{selectedInspection.remarks}</Text>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+
+              <TouchableOpacity style={styles.modalDoneBtn} onPress={() => setSelectedInspection(null)}>
+                <Text style={styles.modalDoneText}>Close Audit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -334,4 +493,157 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', padding: 30, backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.xl, borderWidth: 1, borderColor: COLORS.border },
   emptyIcon: { fontSize: 36, marginBottom: 8 },
   emptyText: { fontSize: FONT.sm, color: COLORS.textSecondary, textAlign: 'center' },
+
+  // ── Modal Styles ──
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: COLORS.surfaceElevated,
+    borderRadius: RADIUS['2xl'],
+    padding: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  modalTitle: {
+    fontSize: FONT.lg,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+  },
+  modalSub: {
+    fontSize: FONT.xs,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.surfaceSunken,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseText: {
+    fontSize: FONT.sm,
+    color: COLORS.textMuted,
+    fontWeight: '800',
+  },
+  auditSection: {
+    marginBottom: 16,
+  },
+  auditSectionTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    letterSpacing: 1.2,
+    marginBottom: 8,
+  },
+  gpsAuditBox: {
+    backgroundColor: COLORS.surfaceSunken,
+    borderRadius: RADIUS.lg,
+    padding: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  gpsAuditBoxVerified: {
+    borderColor: COLORS.success + '40',
+    backgroundColor: COLORS.success + '08',
+  },
+  gpsAuditBoxPending: {
+    borderColor: COLORS.warning + '40',
+    backgroundColor: COLORS.warning + '08',
+  },
+  auditInfoCard: {
+    backgroundColor: COLORS.surfaceSunken,
+    borderRadius: RADIUS.lg,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 8,
+  },
+  auditRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  auditLabel: {
+    fontSize: FONT.xs,
+    color: COLORS.textSecondary,
+  },
+  auditValue: {
+    fontSize: FONT.xs,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  auditValueBold: {
+    fontSize: FONT.xs,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+  },
+  auditValueMonospace: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  auditRemarksBox: {
+    backgroundColor: COLORS.surfaceSunken,
+    borderRadius: RADIUS.lg,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  auditRemarksText: {
+    fontSize: FONT.xs,
+    color: COLORS.textPrimary,
+    lineHeight: 18,
+  },
+  photoContainer: {
+    backgroundColor: COLORS.surfaceSunken,
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.borderBright + '40',
+  },
+  evidenceImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: RADIUS.md,
+  },
+  photoTag: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: COLORS.surfaceElevated,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  photoTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.success,
+  },
+  modalDoneBtn: {
+    backgroundColor: COLORS.accent,
+    borderRadius: RADIUS.lg,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  modalDoneText: {
+    fontSize: FONT.sm,
+    fontWeight: '800',
+    color: '#fff',
+  },
 });

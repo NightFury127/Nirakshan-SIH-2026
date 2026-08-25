@@ -15,6 +15,7 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { useAppStore } from '../../../src/store/useAppStore';
 import { COLORS, FONT, RADIUS, SHADOW } from '../../../src/theme';
+import { formatGpsDistance, type GpsVerificationResult } from '../../../src/utils/gpsVerification';
 
 type Step = 'gps' | 'attendance' | 'evidence' | 'review';
 
@@ -29,6 +30,7 @@ export default function ActiveInspectionScreen() {
   const allProjects = useAppStore(s => s.projects);
   const submitInspectionReport = useAppStore(s => s.submitInspectionReport);
   const updateInspection = useAppStore(s => s.updateInspection);
+  const verifyInspectionGps = useAppStore(s => s.verifyInspectionGps);
 
   const inspection = useMemo(() => allInspections.find(i => i.id === id), [allInspections, id]);
   const project = useMemo(() => allProjects.find(p => p.id === inspection?.projectId), [allProjects, inspection?.projectId]);
@@ -37,8 +39,26 @@ export default function ActiveInspectionScreen() {
   const [currentStep, setCurrentStep] = useState<Step>('gps');
 
   // GPS state
-  const [gpsStatus, setGpsStatus] = useState<'idle' | 'loading' | 'verified' | 'failed'>('idle');
-  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [isVerifyingGps, setIsVerifyingGps] = useState(false);
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [gpsResult, setGpsResult] = useState<GpsVerificationResult | null>(() => {
+    if (inspection?.gpsVerified && inspection.gpsLat && inspection.gpsLng) {
+      return {
+        verified: true,
+        distance: inspection.gpsDistance ?? 0,
+        allowedRadius: inspection.gpsAllowedRadius ?? 100,
+        inspectorLat: inspection.gpsLat,
+        inspectorLng: inspection.gpsLng,
+        projectLat: project?.lat ?? 0,
+        projectLng: project?.lng ?? 0,
+        accuracy: inspection.gpsAccuracy,
+        timestamp: inspection.gpsVerifiedAt ?? new Date().toISOString(),
+        status: 'VERIFIED',
+        message: 'Previously verified on-site location.',
+      };
+    }
+    return null;
+  });
 
   // Attendance state
   const [actualStaff, setActualStaff] = useState('');
@@ -82,32 +102,84 @@ export default function ActiveInspectionScreen() {
     );
   }
 
-  // ── GPS STEP ──────────────────────────────────────────────────────────────
-  const handleGpsVerify = async () => {
-    setGpsStatus('loading');
+  // ── REAL DEVICE GPS VERIFICATION ──────────────────────────────────────────
+  const handleRealGpsVerify = async () => {
+    setIsVerifyingGps(true);
+    setGpsError(null);
+
     try {
+      // 1. Request location permissions
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        // Mock for demo — simulate permission denied but still proceed
-        setTimeout(() => {
-          setGpsCoords({ lat: project.lat, lng: project.lng });
-          setGpsStatus('verified');
-          updateInspection(id, { gpsVerified: true });
-        }, 1500);
+        setGpsError('Location permission denied. Please grant GPS access in device settings.');
+        setIsVerifyingGps(false);
         return;
       }
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      setGpsCoords({ lat: loc.coords.latitude, lng: loc.coords.longitude });
-      setGpsStatus('verified');
-      updateInspection(id, { gpsVerified: true, gpsLat: loc.coords.latitude, gpsLng: loc.coords.longitude });
-    } catch {
-      // Mock fallback for emulator/demo
-      setTimeout(() => {
-        setGpsCoords({ lat: project.lat + 0.0001, lng: project.lng + 0.0001 });
-        setGpsStatus('verified');
-        updateInspection(id, { gpsVerified: true });
-      }, 1500);
+
+      // 2. Check if device location services are enabled
+      const isLocationEnabled = await Location.hasServicesEnabledAsync();
+      if (!isLocationEnabled) {
+        setGpsError('Device location services (GPS) are turned off. Please enable GPS.');
+        setIsVerifyingGps(false);
+        return;
+      }
+
+      // 3. Acquire real device GPS position
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      // 4. Run through verification engine against registered project location
+      const res = verifyInspectionGps(
+        id,
+        {
+          lat: loc.coords.latitude,
+          lng: loc.coords.longitude,
+          accuracy: loc.coords.accuracy ?? undefined,
+        },
+        100
+      );
+
+      setGpsResult(res);
+    } catch (err: any) {
+      setGpsError(err?.message || 'Could not acquire GPS fix. Please ensure you have a clear view of the sky and try again.');
+    } finally {
+      setIsVerifyingGps(false);
     }
+  };
+
+  // ── DEMO SIMULATOR CONTROLS (FOR HACKATHON JUDGING) ──────────────────────
+  const handleSimulateGps = (type: 'onsite' | 'offsite') => {
+    setIsVerifyingGps(true);
+    setGpsError(null);
+
+    setTimeout(() => {
+      let simLat = project.lat;
+      let simLng = project.lng;
+
+      if (type === 'onsite') {
+        // Simulates being ~25 meters from registered coordinates
+        simLat = project.lat + 0.00018;
+        simLng = project.lng + 0.00012;
+      } else {
+        // Simulates being ~450 meters away (outside 100m geofence)
+        simLat = project.lat + 0.0035;
+        simLng = project.lng + 0.0028;
+      }
+
+      const res = verifyInspectionGps(
+        id,
+        {
+          lat: simLat,
+          lng: simLng,
+          accuracy: type === 'onsite' ? 6 : 14,
+        },
+        100
+      );
+
+      setGpsResult(res);
+      setIsVerifyingGps(false);
+    }, 600);
   };
 
   // ── PHOTO STEP ────────────────────────────────────────────────────────────
@@ -118,7 +190,7 @@ export default function ActiveInspectionScreen() {
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       quality: 0.7,
       allowsEditing: false,
     });
@@ -129,7 +201,7 @@ export default function ActiveInspectionScreen() {
 
   const handlePickGallery = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       quality: 0.7,
     });
     if (!result.canceled && result.assets[0]) {
@@ -147,6 +219,11 @@ export default function ActiveInspectionScreen() {
       return;
     }
 
+    if (!gpsResult?.verified && !inspection.gpsVerified) {
+      Alert.alert('Security Block', 'Cannot submit: GPS location verification is required on site.');
+      return;
+    }
+
     Alert.alert(
       'Submit Inspection Report',
       'This action will finalize the report and update the project risk score. This cannot be undone.',
@@ -157,17 +234,24 @@ export default function ActiveInspectionScreen() {
           onPress: () => {
             setSubmitting(true);
             setTimeout(() => {
-              submitInspectionReport(id, {
+              const res = submitInspectionReport(id, {
                 actualStaff: staff,
                 actualBeneficiaries: beneficiaries,
                 remarks,
                 photoUri: photoUri ?? undefined,
-                gpsLat: gpsCoords?.lat ?? project.lat,
-                gpsLng: gpsCoords?.lng ?? project.lng,
+                gpsLat: gpsResult?.inspectorLat ?? inspection.gpsLat,
+                gpsLng: gpsResult?.inspectorLng ?? inspection.gpsLng,
               });
+
               setSubmitting(false);
+
+              if (res && !res.success) {
+                Alert.alert('Submission Failed', res.error || 'Could not submit report.');
+                return;
+              }
+
               setSubmitted(true);
-            }, 1500);
+            }, 1200);
           },
         },
       ]
@@ -175,7 +259,7 @@ export default function ActiveInspectionScreen() {
   };
 
   const currentStepIndex = STEPS.indexOf(currentStep);
-  const canProceedFromGps = gpsStatus === 'verified';
+  const isGpsVerified = Boolean(gpsResult?.verified || inspection?.gpsVerified);
   const canProceedFromAttendance = actualStaff.length > 0 && actualBeneficiaries.length > 0;
 
   const attendanceRatioStaff = actualStaff ? parseInt(actualStaff) / project.expectedStaff : 0;
@@ -223,59 +307,178 @@ export default function ActiveInspectionScreen() {
           <Text style={styles.projectBannerLoc}>📍 {project.location}</Text>
         </View>
 
-        {/* ── STEP: GPS ── */}
+        {/* ── STEP: GPS VERIFICATION ── */}
         {currentStep === 'gps' && (
           <View style={styles.stepContent}>
-            <Text style={styles.stepTitle}>📡 GPS Location Verification</Text>
-            <Text style={styles.stepDesc}>
-              Your device location must be verified before starting the inspection. This confirms on-site presence.
-            </Text>
+            <View style={styles.stepHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.stepTitle}>📡 GPS Verification</Text>
+                <Text style={styles.stepDesc}>
+                  Confirm physical presence at the registered project reference location before beginning the inspection.
+                </Text>
+              </View>
+            </View>
 
-            <View style={[styles.gpsBox, gpsStatus === 'verified' && styles.gpsBoxVerified]}>
-              {gpsStatus === 'idle' && (
-                <>
-                  <Text style={styles.gpsIcon}>🗺️</Text>
-                  <Text style={styles.gpsText}>Location not verified</Text>
-                  <Text style={styles.gpsSubtext}>Tap below to verify your GPS coordinates</Text>
-                </>
-              )}
-              {gpsStatus === 'loading' && (
-                <>
-                  <ActivityIndicator color={COLORS.accent} size="large" />
-                  <Text style={[styles.gpsText, { marginTop: 12 }]}>Acquiring GPS signal...</Text>
-                </>
-              )}
-              {gpsStatus === 'verified' && (
-                <>
-                  <Text style={styles.gpsIcon}>✅</Text>
-                  <Text style={[styles.gpsText, { color: COLORS.success }]}>GPS VERIFIED</Text>
-                  <View style={styles.gpsCoordsBox}>
-                    <Text style={styles.gpsCoordsText}>
-                      Lat: {gpsCoords?.lat.toFixed(6)}  ·  Lng: {gpsCoords?.lng.toFixed(6)}
+            {/* GPS Telemetry & Comparison Card */}
+            <View style={[styles.gpsCard, SHADOW.card, isGpsVerified && styles.gpsCardVerified]}>
+              <View style={styles.gpsCardHeader}>
+                <Text style={styles.gpsCardHeaderTitle}>GEOFENCE & LOCATION TELEMETRY</Text>
+                <View style={[
+                  styles.gpsStatusBadge,
+                  isGpsVerified ? styles.gpsStatusBadgeSuccess :
+                  gpsResult && !gpsResult.verified ? styles.gpsStatusBadgeDanger : styles.gpsStatusBadgePending
+                ]}>
+                  <Text style={[
+                    styles.gpsStatusBadgeText,
+                    isGpsVerified ? { color: COLORS.success } :
+                    gpsResult && !gpsResult.verified ? { color: COLORS.danger } : { color: COLORS.warning }
+                  ]}>
+                    {isGpsVerified ? '🟢 VERIFIED' : gpsResult && !gpsResult.verified ? '🔴 OUTSIDE GEOFENCE' : '🟠 AWAITING GPS'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Data comparison grid */}
+              <View style={styles.telemetryGrid}>
+                <View style={styles.telemetryItem}>
+                  <Text style={styles.telemetryLabel}>🏛️ Registered Project Lat/Lng</Text>
+                  <Text style={styles.telemetryValueMonospace}>
+                    {project.lat.toFixed(6)}, {project.lng.toFixed(6)}
+                  </Text>
+                </View>
+
+                <View style={styles.telemetryItem}>
+                  <Text style={styles.telemetryLabel}>📱 Inspector Current Coordinates</Text>
+                  <Text style={[
+                    styles.telemetryValueMonospace,
+                    gpsResult ? { color: isGpsVerified ? COLORS.success : COLORS.danger } : { color: COLORS.textMuted }
+                  ]}>
+                    {gpsResult ? `${gpsResult.inspectorLat.toFixed(6)}, ${gpsResult.inspectorLng.toFixed(6)}` : 'Not acquired yet'}
+                  </Text>
+                </View>
+
+                <View style={styles.telemetrySplitRow}>
+                  <View style={[styles.telemetryItem, { flex: 1 }]}>
+                    <Text style={styles.telemetryLabel}>🎯 Allowed Radius</Text>
+                    <Text style={styles.telemetryValue}>100 m</Text>
+                  </View>
+
+                  <View style={[styles.telemetryItem, { flex: 1 }]}>
+                    <Text style={styles.telemetryLabel}>📏 Calculated Distance</Text>
+                    <Text style={[
+                      styles.telemetryValue,
+                      gpsResult ? (isGpsVerified ? { color: COLORS.success } : { color: COLORS.danger }) : {}
+                    ]}>
+                      {gpsResult ? formatGpsDistance(gpsResult.distance) : '—'}
                     </Text>
                   </View>
-                  <Text style={styles.gpsSubtext}>Within 500m of {project.name}</Text>
-                </>
+
+                  <View style={[styles.telemetryItem, { flex: 1 }]}>
+                    <Text style={styles.telemetryLabel}>🛰️ GPS Accuracy</Text>
+                    <Text style={styles.telemetryValue}>
+                      {gpsResult?.accuracy ? `±${gpsResult.accuracy}m` : '—'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Status Banner / Feedback */}
+              {isVerifyingGps ? (
+                <View style={styles.gpsStatusBannerLoading}>
+                  <ActivityIndicator size="small" color={COLORS.inspectorBlue} />
+                  <Text style={styles.gpsStatusBannerLoadingText}>
+                    Acquiring real-device GPS satellites & calculating Haversine distance...
+                  </Text>
+                </View>
+              ) : isGpsVerified ? (
+                <View style={styles.gpsStatusBannerSuccess}>
+                  <Text style={styles.gpsBannerIcon}>✓</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.gpsStatusBannerSuccessTitle}>LOCATION VERIFIED</Text>
+                    <Text style={styles.gpsStatusBannerSuccessSub}>
+                      Inspector is within {gpsResult?.distance ?? inspection.gpsDistance ?? 0}m of the project reference location.
+                    </Text>
+                  </View>
+                </View>
+              ) : gpsResult && !gpsResult.verified ? (
+                <View style={styles.gpsStatusBannerFailure}>
+                  <Text style={styles.gpsBannerIcon}>✕</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.gpsStatusBannerFailureTitle}>GPS VERIFICATION FAILED</Text>
+                    <Text style={styles.gpsStatusBannerFailureSub}>
+                      You are {formatGpsDistance(gpsResult.distance)} away from the registered site.
+                      Allowed geofence radius is 100 m.
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.gpsStatusBannerIdle}>
+                  <Text style={styles.gpsBannerIcon}>📍</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.gpsStatusBannerIdleTitle}>Awaiting GPS Verification</Text>
+                    <Text style={styles.gpsStatusBannerIdleSub}>
+                      Tap below to acquire your phone's real GPS position.
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {gpsError && (
+                <View style={styles.gpsErrorBox}>
+                  <Text style={styles.gpsErrorText}>⚠️ {gpsError}</Text>
+                </View>
               )}
             </View>
 
-            {gpsStatus !== 'verified' && (
-              <TouchableOpacity
-                style={[styles.primaryBtn, gpsStatus === 'loading' && styles.primaryBtnDisabled]}
-                onPress={handleGpsVerify}
-                disabled={gpsStatus === 'loading'}
-              >
-                <Text style={styles.primaryBtnText}>
-                  {gpsStatus === 'loading' ? 'Locating...' : '📍 Verify GPS Location'}
-                </Text>
-              </TouchableOpacity>
-            )}
+            {/* Action Buttons */}
+            <View style={styles.gpsActionSection}>
+              {!isGpsVerified ? (
+                <TouchableOpacity
+                  style={[styles.primaryBtn, isVerifyingGps && styles.primaryBtnDisabled]}
+                  onPress={handleRealGpsVerify}
+                  disabled={isVerifyingGps}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {isVerifyingGps ? 'Acquiring GPS...' : '📍 Acquire Real Device GPS'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.primaryBtn, { backgroundColor: COLORS.success }]}
+                  onPress={() => setCurrentStep('attendance')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.primaryBtnText}>Continue to Checklist →</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
-            {gpsStatus === 'verified' && (
-              <TouchableOpacity style={styles.primaryBtn} onPress={() => setCurrentStep('attendance')}>
-                <Text style={styles.primaryBtnText}>Next: Attendance →</Text>
-              </TouchableOpacity>
-            )}
+            {/* Hackathon Judge / Demo Simulation Presets */}
+            <View style={styles.demoSimCard}>
+              <View style={styles.demoSimHeader}>
+                <Text style={styles.demoSimTag}>⚡ HACKATHON DEMO CONTROLS</Text>
+                <Text style={styles.demoSimSub}>
+                  Test both positive and negative Geofence validation cases:
+                </Text>
+              </View>
+              <View style={styles.demoSimBtnRow}>
+                <TouchableOpacity
+                  style={[styles.simBtn, styles.simBtnSuccess]}
+                  onPress={() => handleSimulateGps('onsite')}
+                  disabled={isVerifyingGps}
+                >
+                  <Text style={styles.simBtnSuccessText}>🎯 Simulate On-Site (~25m)</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.simBtn, styles.simBtnDanger]}
+                  onPress={() => handleSimulateGps('offsite')}
+                  disabled={isVerifyingGps}
+                >
+                  <Text style={styles.simBtnDangerText}>🏃 Simulate Off-Site (~450m)</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         )}
 
@@ -406,7 +609,17 @@ export default function ActiveInspectionScreen() {
             <Text style={styles.stepDesc}>Verify all data before final submission. This report is permanent.</Text>
 
             <View style={[styles.reviewCard, SHADOW.card]}>
-              <ReviewRow icon="📍" label="GPS Status" value="✅ Verified" valueColor={COLORS.success} />
+              <ReviewRow
+                icon="📍"
+                label="GPS Verification"
+                value={isGpsVerified ? `✅ Verified (${gpsResult?.distance ?? inspection.gpsDistance ?? 0}m)` : '❌ Not Verified'}
+                valueColor={isGpsVerified ? COLORS.success : COLORS.danger}
+              />
+              <ReviewRow
+                icon="📱"
+                label="Inspector GPS"
+                value={gpsResult ? `${gpsResult.inspectorLat.toFixed(4)}, ${gpsResult.inspectorLng.toFixed(4)}` : `${inspection.gpsLat?.toFixed(4)}, ${inspection.gpsLng?.toFixed(4)}`}
+              />
               <ReviewRow icon="👤" label="Actual Staff" value={actualStaff} valueColor={isLowAttendance ? COLORS.danger : COLORS.textPrimary} />
               <ReviewRow icon="👥" label="Actual Beneficiaries" value={actualBeneficiaries} />
               <ReviewRow icon="📸" label="Photo Evidence" value={photoUri ? '1 photo attached' : 'No photo'} valueColor={photoUri ? COLORS.success : COLORS.warning} />
@@ -431,9 +644,9 @@ export default function ActiveInspectionScreen() {
                 <Text style={styles.secondaryBtnText}>← Edit</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.submitBtn, submitting && styles.primaryBtnDisabled]}
+                style={[styles.submitBtn, (submitting || !isGpsVerified) && styles.primaryBtnDisabled]}
                 onPress={handleSubmit}
-                disabled={submitting}
+                disabled={submitting || !isGpsVerified}
               >
                 {submitting
                   ? <ActivityIndicator color="#fff" />
@@ -487,16 +700,249 @@ const styles = StyleSheet.create({
   projectBannerLoc: { fontSize: FONT.xs, color: COLORS.textSecondary, marginTop: 2 },
 
   stepContent: { paddingTop: 4 },
+  stepHeaderRow: { marginBottom: 12 },
   stepTitle: { fontSize: FONT.xl, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 6 },
-  stepDesc: { fontSize: FONT.sm, color: COLORS.textSecondary, lineHeight: 20, marginBottom: 20 },
+  stepDesc: { fontSize: FONT.sm, color: COLORS.textSecondary, lineHeight: 20, marginBottom: 16 },
 
-  gpsBox: { backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.xl, padding: 28, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border, marginBottom: 20 },
-  gpsBoxVerified: { borderColor: COLORS.success + '50', backgroundColor: 'rgba(48,209,88,0.05)' },
-  gpsIcon: { fontSize: 48, marginBottom: 12 },
-  gpsText: { fontSize: FONT.lg, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 4 },
-  gpsSubtext: { fontSize: FONT.sm, color: COLORS.textSecondary, textAlign: 'center' },
-  gpsCoordsBox: { backgroundColor: COLORS.surfaceSunken, borderRadius: RADIUS.md, paddingHorizontal: 12, paddingVertical: 6, marginTop: 8, marginBottom: 6 },
-  gpsCoordsText: { fontSize: FONT.xs, color: COLORS.success, fontFamily: 'monospace' },
+  // ── GPS Card & Telemetry ──
+  gpsCard: {
+    backgroundColor: COLORS.surfaceElevated,
+    borderRadius: RADIUS.xl,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 16,
+  },
+  gpsCardVerified: {
+    borderColor: COLORS.success + '45',
+    backgroundColor: 'rgba(48,209,88,0.03)',
+  },
+  gpsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  gpsCardHeaderTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    letterSpacing: 1.2,
+  },
+  gpsStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+  },
+  gpsStatusBadgeSuccess: {
+    backgroundColor: COLORS.success + '15',
+    borderColor: COLORS.success + '40',
+  },
+  gpsStatusBadgeDanger: {
+    backgroundColor: COLORS.danger + '15',
+    borderColor: COLORS.danger + '40',
+  },
+  gpsStatusBadgePending: {
+    backgroundColor: COLORS.warning + '15',
+    borderColor: COLORS.warning + '40',
+  },
+  gpsStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+
+  telemetryGrid: {
+    gap: 10,
+    marginBottom: 14,
+  },
+  telemetryItem: {
+    backgroundColor: COLORS.surfaceSunken,
+    padding: 10,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border + '60',
+  },
+  telemetrySplitRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  telemetryLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    marginBottom: 3,
+  },
+  telemetryValue: {
+    fontSize: FONT.sm,
+    fontWeight: '800',
+    color: COLORS.textPrimary,
+  },
+  telemetryValueMonospace: {
+    fontSize: FONT.xs,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    fontFamily: 'monospace',
+  },
+
+  gpsStatusBannerLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: COLORS.inspectorBlue + '15',
+    borderColor: COLORS.inspectorBlue + '40',
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 12,
+  },
+  gpsStatusBannerLoadingText: {
+    flex: 1,
+    fontSize: FONT.xs,
+    color: COLORS.inspectorBlue,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  gpsStatusBannerSuccess: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: COLORS.success + '18',
+    borderColor: COLORS.success + '45',
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 12,
+  },
+  gpsStatusBannerSuccessTitle: {
+    fontSize: FONT.xs,
+    fontWeight: '800',
+    color: COLORS.success,
+    letterSpacing: 0.5,
+  },
+  gpsStatusBannerSuccessSub: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  gpsStatusBannerFailure: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: COLORS.danger + '18',
+    borderColor: COLORS.danger + '45',
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 12,
+  },
+  gpsStatusBannerFailureTitle: {
+    fontSize: FONT.xs,
+    fontWeight: '800',
+    color: COLORS.danger,
+    letterSpacing: 0.5,
+  },
+  gpsStatusBannerFailureSub: {
+    fontSize: 11,
+    color: COLORS.danger,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  gpsStatusBannerIdle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: COLORS.surfaceSunken,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: 12,
+  },
+  gpsStatusBannerIdleTitle: {
+    fontSize: FONT.xs,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  gpsStatusBannerIdleSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  gpsBannerIcon: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: COLORS.textPrimary,
+  },
+  gpsErrorBox: {
+    marginTop: 10,
+    padding: 8,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.danger + '15',
+  },
+  gpsErrorText: {
+    fontSize: 11,
+    color: COLORS.danger,
+    lineHeight: 15,
+  },
+
+  gpsActionSection: {
+    marginBottom: 16,
+  },
+
+  // ── Hackathon Demo Simulator Section ──
+  demoSimCard: {
+    backgroundColor: COLORS.surfaceSunken,
+    borderRadius: RADIUS.xl,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderBright + '40',
+  },
+  demoSimHeader: {
+    marginBottom: 10,
+  },
+  demoSimTag: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: COLORS.officialGold,
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  demoSimSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+  },
+  demoSimBtnRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  simBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  simBtnSuccess: {
+    backgroundColor: COLORS.success + '15',
+    borderColor: COLORS.success + '50',
+  },
+  simBtnSuccessText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.success,
+  },
+  simBtnDanger: {
+    backgroundColor: COLORS.danger + '15',
+    borderColor: COLORS.danger + '50',
+  },
+  simBtnDangerText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.danger,
+  },
 
   inputGroup: { marginBottom: 16 },
   inputLabel: { fontSize: FONT.sm, fontWeight: '600', color: COLORS.textSecondary, marginBottom: 6 },
