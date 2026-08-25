@@ -52,6 +52,9 @@ export default function LoginScreen() {
   const router = useRouter();
   const loginWithCredentials = useAppStore(s => s.loginWithCredentials);
   const registerUser = useAppStore(s => s.registerUser);
+  // Live system stats — visible on login screen to confirm sync is working
+  const projects    = useAppStore(s => s.projects);
+  const inspections = useAppStore(s => s.inspections);
 
   const [selectedRole, setSelectedRole] = useState<Role>('official');
   const [authMode, setAuthMode] = useState<AuthMode>('login');
@@ -171,8 +174,17 @@ export default function LoginScreen() {
               <Text style={styles.govTagText}>GOVERNMENT OF INDIA · SECURE ACCESS</Text>
             </View>
           </View>
+          {/* System Status — shows live data so user knows sync is working */}
+          {projects.length > 0 && (
+            <View style={styles.syncBar}>
+              <View style={styles.syncDot} />
+              <Text style={styles.syncText}>
+                {projects.length} project{projects.length !== 1 ? 's' : ''} in system
+                {'  ·  '}{inspections.length} inspection{inspections.length !== 1 ? 's' : ''}
+              </Text>
+            </View>
+          )}
 
-          {/* Main Auth Modal / Card */}
           <View style={[styles.authCard, SHADOW.card]}>
             
             {/* 3-Role Selector */}
@@ -449,6 +461,35 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.bg,
   },
+
+  // Sync status bar
+  syncBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: COLORS.success + '18',
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: COLORS.success + '35',
+    marginBottom: 12,
+    alignSelf: 'center',
+  },
+  syncDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: COLORS.success,
+  },
+  syncText: {
+    fontSize: FONT.xs,
+    color: COLORS.success,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 24,

@@ -97,13 +97,23 @@ export default function OfficialDashboard() {
           </View>
         </View>
 
-        {sortedProjects.map(project => (
-          <ProjectCard
-            key={project.id}
-            project={project}
-            onPress={() => router.push(`/(official)/project/${project.id}`)}
-          />
-        ))}
+        {sortedProjects.length === 0 ? (
+          <View style={styles.emptyProjects}>
+            <Text style={styles.emptyIcon}>🏗️</Text>
+            <Text style={styles.emptyTitle}>No Projects Yet</Text>
+            <Text style={styles.emptyText}>
+              Projects registered by Field Inspectors will appear here automatically.
+            </Text>
+          </View>
+        ) : (
+          sortedProjects.map(project => (
+            <ProjectCard
+              key={project.id}
+              project={project}
+              onPress={() => router.push(`/(official)/project/${project.id}`)}
+            />
+          ))
+        )}
 
         <View style={{ height: 20 }} />
       </ScrollView>
@@ -196,4 +206,17 @@ const styles = StyleSheet.create({
   filterText: { fontSize: FONT.xs, color: COLORS.textSecondary },
 
   metricsRow: { flexDirection: 'row', gap: 10 },
+
+  emptyProjects: {
+    alignItems: 'center',
+    padding: 40,
+    backgroundColor: COLORS.surfaceElevated,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginTop: 4,
+  },
+  emptyIcon:  { fontSize: 44, marginBottom: 12 },
+  emptyTitle: { fontSize: FONT.xl, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 8 },
+  emptyText:  { fontSize: FONT.sm, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 20 },
 });
