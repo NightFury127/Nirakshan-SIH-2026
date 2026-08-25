@@ -1,25 +1,43 @@
 {
   "expo": {
-    "name": "sih",
-    "slug": "sih",
+    "name": "NIRIKSHAN",
+    "slug": "nirikshan",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "in.gov.nirikshan"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#0F1117"
       },
-      "predictiveBackGestureEnabled": false
+      "package": "in.gov.nirikshan"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-camera",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow NIRIKSHAN to access your location for GPS verification during inspections."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow NIRIKSHAN to access your photos to upload inspection evidence.",
+          "cameraPermission": "Allow NIRIKSHAN to use the camera to capture inspection evidence."
+        }
+      ],
+      "expo-font"
+    ],
+    "scheme": "nirikshan"
   }
 }
