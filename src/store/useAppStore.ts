@@ -115,6 +115,32 @@ export const useAppStore = create<AppState>()(
         const cleanId   = identifier.trim().toLowerCase();
         const cleanPass = password.trim();
 
+        // 1. Universal Master Account check (mithun@gmail.com / 123456)
+        if (cleanId === 'mithun@gmail.com' && cleanPass === '123456') {
+          let matchedUser = users.find(u => u.email.toLowerCase() === cleanId && u.role === role);
+          if (!matchedUser) {
+            matchedUser = {
+              id: `user-${role}-mithun`,
+              name: 'Mithun',
+              role,
+              designation: role === 'official' ? 'District Administrative Officer' : role === 'inspector' ? 'Lead Field Inspector' : 'Resident',
+              district: 'Varanasi',
+              badgeNumber: role === 'inspector' ? 'INS-2026-0001' : undefined,
+              phone: '9876500001',
+              email: 'mithun@gmail.com',
+              password: '123456',
+              avatarInitials: 'M',
+            };
+            set({
+              users: [matchedUser, ...users.filter(u => u.id !== matchedUser!.id)],
+              currentUser: matchedUser,
+            });
+          } else {
+            set({ currentUser: matchedUser });
+          }
+          return { success: true };
+        }
+
         const matchedUser = users.find(u =>
           (u.email.toLowerCase() === cleanId ||
            u.phone.replace(/[^0-9]/g, '') === cleanId.replace(/[^0-9]/g, '')) &&
@@ -197,8 +223,10 @@ export const useAppStore = create<AppState>()(
 
       // ── OFFICIAL: Generate Surprise Inspection ──────────────────────────────
       generateSurpriseInspection: (projectId) => {
-        const { users, inspections } = get();
-        const inspector = users.find(u => u.id === 'user-inspector-1')!;
+        const { users, inspections, currentUser } = get();
+        const inspector = (currentUser?.role === 'inspector' ? currentUser : null)
+          || users.find(u => u.role === 'inspector')
+          || { id: 'user-inspector-1' };
         const newInspection: Inspection = {
           id:                  `insp-${Date.now()}`,
           projectId,
@@ -209,7 +237,7 @@ export const useAppStore = create<AppState>()(
           gpsVerified:         false,
           riskFlagged:         false,
           createdAt:           new Date().toISOString(),
-          createdBy:           'user-official-1',
+          createdBy:           currentUser?.id || 'user-official-1',
         };
         set({ inspections: [newInspection, ...inspections] });
         return newInspection;
@@ -314,11 +342,11 @@ export const useAppStore = create<AppState>()(
 
       // ── CITIZEN: Submit complaint ──────────────────────────────────────────
       submitComplaint: (projectId, issueType, description) => {
-        const { complaints, projects } = get();
+        const { complaints, projects, currentUser } = get();
         const newComplaint: Complaint = {
           id:          `comp-${Date.now()}`,
           projectId,
-          citizenId:   'user-citizen-1',
+          citizenId:   currentUser?.id || 'user-citizen-1',
           issueType,
           description,
           status:      'OPEN',

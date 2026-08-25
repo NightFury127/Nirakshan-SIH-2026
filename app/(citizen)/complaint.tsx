@@ -45,7 +45,10 @@ export default function ComplaintScreen() {
   const selectedProject = projects.find(p => p.id === selectedProjectId);
   const canSubmit = selectedProjectId && selectedIssue && description.trim().length >= 10;
 
-  const myComplaints = complaints.filter(c => c.citizenId === 'user-citizen-1');
+  const currentUser = useAppStore(s => s.currentUser);
+  const myComplaints = complaints.filter(
+    c => c.citizenId === currentUser?.id || c.citizenId === 'user-citizen-mithun' || c.citizenId === 'user-citizen-1'
+  );
 
   const handleSubmit = () => {
     if (!canSubmit) return;

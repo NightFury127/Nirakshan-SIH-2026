@@ -81,6 +81,38 @@ export interface Complaint {
 
 export const MOCK_USERS: User[] = [
   {
+    id: 'user-official-mithun',
+    name: 'Mithun',
+    role: 'official',
+    designation: 'District Administrative Officer',
+    district: 'Varanasi',
+    phone: '9876500001',
+    email: 'mithun@gmail.com',
+    password: '123456',
+    avatarInitials: 'M',
+  },
+  {
+    id: 'user-inspector-mithun',
+    name: 'Mithun',
+    role: 'inspector',
+    designation: 'Lead Field Inspector',
+    district: 'Varanasi',
+    badgeNumber: 'INS-2026-0001',
+    phone: '9876500001',
+    email: 'mithun@gmail.com',
+    password: '123456',
+    avatarInitials: 'M',
+  },
+  {
+    id: 'user-citizen-mithun',
+    name: 'Mithun',
+    role: 'citizen',
+    phone: '9876500001',
+    email: 'mithun@gmail.com',
+    password: '123456',
+    avatarInitials: 'M',
+  },
+  {
     id: 'user-official-1',
     name: 'Rajesh Kumar Sharma',
     role: 'official',
